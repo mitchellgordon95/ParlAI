@@ -249,21 +249,24 @@ class History(object):
         """
         Update the history with the given observation.
         """
-        if self.field in obs and obs[self.field] is not None:
-            if self.split_on_newln:
-                next_texts = obs[self.field].split('\n')
-            else:
-                next_texts = [obs[self.field]]
-            for text in next_texts:
-                self._update_raw_strings(text)
-                if self.add_person_tokens:
-                    text = self._add_person_tokens(
-                        obs[self.field], self.p1_token, self.add_p1_after_newln
-                    )
-                # update history string
-                self._update_strings(text)
-                # update history vecs
-                self._update_vecs(text)
+        for i in range(3):  
+            field = f"{self.field}_{i}"
+            print(f"field is {field}") 
+            if field in obs and obs[field] is not None:
+                if self.split_on_newln:
+                    next_texts = obs[field].split('\n')
+                else:
+                    next_texts = [obs[field]]
+                for text in next_texts:
+                    self._update_raw_strings(text)
+                    if self.add_person_tokens:
+                        text = self._add_person_tokens(
+                            obs[self.field], self.p1_token, self.add_p1_after_newln
+                        )
+                    # update history string
+                    self._update_strings(text)
+                    # update history vecs
+                    self._update_vecs(text)
 
     def get_history_str(self):
         """
@@ -1448,6 +1451,7 @@ class TorchAgent(ABC, Agent):
 
         self.observation = observation
         # update the history using the observation
+        print(f"updating history with {observation}") 
         self.history.update_history(observation)
         return self.vectorize(
             observation,
@@ -1725,13 +1729,16 @@ class TorchAgent(ABC, Agent):
         ]
 
         # check if there are any labels available, if so we will train on them
-        self.is_training = any('labels' in obs for obs in observations)
+        print([obs for obs in observations])
+        # TODO HRED: change here to any labels_index
+        self.is_training = any('labels' in obs or "labels_1" in obs for obs in observations)
 
         # create a batch from the vectors
         batch = self.batchify(observations)
 
         if self.is_training:
             output = self.train_step(batch)
+            print(f"took train step and got {output}") 
         else:
             with torch.no_grad():
                 # save memory and compute by disabling autograd.

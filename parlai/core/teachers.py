@@ -374,7 +374,10 @@ class FixedDialogTeacher(Teacher):
             return {'episode_done': True}, True
 
         ex = self.get(self.episode_idx, self.entry_idx)
-        self.episode_done = ex.get('episode_done', False)
+        if ex is not None:
+            self.episode_done = ex.get('episode_done', False)
+        else:
+            return None, True
 
         if (
             not self.random
@@ -494,8 +497,12 @@ class FixedDialogTeacher(Teacher):
 
         # get next example, action is episode_done dict if already out of exs
         action, self.epochDone = self.next_example()
+        
+        while action is None:
+            action, self.epochDone = self.next_example()
         # TODO: all teachers should eventually create messages
         # while setting up the data, so this won't be necessary
+
         action = Message(action)
         action.force_set('id', self.getID())
 
