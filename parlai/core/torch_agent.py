@@ -1139,7 +1139,6 @@ class TorchAgent(ABC, Agent):
         Subclasses will likely want to share their model as well.
         """
         shared = super().share()
-
         if self.opt.get('numthreads', 1) > 1 and isinstance(self.metrics, dict):
             # move metrics and model to shared memory
             self.metrics = SharedTable(self.metrics)
@@ -1534,9 +1533,13 @@ class TorchAgent(ABC, Agent):
         observation = Message(observation)
 
         # Sanity check everything is in order
-        self._validate_observe_invariants()
+        #print(f"observation coming into observe is {observation}") 
+        #self._validate_observe_invariants()
+        #print(f"\t----validated") 
 
         if observation.get('episode_done'):
+
+            #print(f"episode_done is True") 
             self.__expecting_clear_history = True
         elif 'labels' in observation or 'eval_labels' in observation:
             # make sure we note that we're expecting a reply in the future
@@ -1563,10 +1566,11 @@ class TorchAgent(ABC, Agent):
         :param self_message:
             The message corresponding to the output from batch_act.
         """
+        #print(f"self observe {self_message}") 
         use_reply = self.opt.get('use_reply', 'label')
 
         # quick check everything is in order
-        self._validate_self_observe_invariants()
+        #self._validate_self_observe_invariants()
 
         assert self.observation is not None
         if self.observation['episode_done']:
@@ -1598,6 +1602,7 @@ class TorchAgent(ABC, Agent):
                 lbls = self.observation[label_key]
                 last_reply = lbls[0] if len(lbls) == 1 else self.random.choice(lbls)
                 self.history.add_reply(last_reply)
+
                 return
             # you might expect a hard failure here, but in interactive mode we'll
             # never get a label
@@ -1867,7 +1872,6 @@ class TorchAgent(ABC, Agent):
 
         # Make sure we push all the metrics to main thread in hogwild/workers
         self.global_metrics.flush()
-
         return batch_reply
 
     @abstractmethod
