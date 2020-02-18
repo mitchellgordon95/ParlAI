@@ -107,6 +107,7 @@ class TorchGeneratorModel(nn.Module, ABC):
         seqlen = ys.size(1)
         inputs = ys.narrow(1, 0, seqlen - 1)
         inputs = torch.cat([self.START.detach().expand(bsz, 1), inputs], 1)
+        
         latent, _ = self.decoder(inputs, encoder_states)
         logits = self.output(latent)
         _, preds = logits.max(dim=2)
@@ -194,7 +195,7 @@ class TorchGeneratorModel(nn.Module, ABC):
         """
         pass
 
-    def forward(self, *xs, ys=None, prev_enc=None, maxlen=None, bsz=None):
+    def forward(self, *xs, ys=None, prev_enc=None,  maxlen=None, bsz=None):
         """
         Get output predictions from the model.
 
@@ -238,7 +239,7 @@ class TorchGeneratorModel(nn.Module, ABC):
         encoder_states = prev_enc if prev_enc is not None else self.encoder(*xs)
 
         # use teacher forcing
-        scores, preds = self.decode_forced(encoder_states, ys)
+        scores, preds= self.decode_forced(encoder_states, ys)
         return scores, preds, encoder_states
 
 
@@ -555,6 +556,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         """
         if batch.label_vec is None:
             raise ValueError('Cannot compute loss without a label.')
+        #TODO HRED: change model forward function to implement HRED 
         model_output = self.model(*self._model_input(batch), ys=batch.label_vec)
         scores, preds, *_ = model_output
         score_view = scores.view(-1, scores.size(-1))
@@ -589,7 +591,8 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         self.zero_grad()
 
         try:
-            loss = self.compute_loss(batch)
+            loss= self.compute_loss(batch)
+            self.metrics['loss'] += loss.item()
             self.backward(loss)
             self.update_params()
         except RuntimeError as e:
@@ -869,6 +872,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         )
 
         inds = torch.arange(bsz).to(dev).unsqueeze(1).repeat(1, beam_size).view(-1)
+        # TODO HRED: modify reodrder_encoder_states so that this is the context vector for HRED
         encoder_states = model.reorder_encoder_states(encoder_states, inds)
         incr_state = None
 
