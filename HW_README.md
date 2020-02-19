@@ -11,15 +11,15 @@ scp hlt4:/home/hltcoe/estengel/ParlAI/parlai_internal/dailydialog.dict ParlAI/pa
 in a separate terminal
 
 brew cask install ngrok
-ngrok http 80
-copy the url
-paste into lambda_function.py NGROK variable
+ngrok tcp 80
+copy the url (without leading tcp://), port
+paste into lambda_function.py NGROK and NGROK_PORT variable
 
 Make an alexa app
-Upload interaction_model.json and lambda_function.py # TODO: finish lambda_function.py
+Upload interaction_model.json and lambda_function.py
 
 Open test console
 > "open mitchell's sandbox app"
 > "tell hey what's up"
 
-Converse.
+Converse. Every utterance must start with "tell".

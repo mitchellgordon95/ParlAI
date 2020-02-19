@@ -17,7 +17,12 @@ from ask_sdk_model import Response
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-NGROK = "http://..."
+import socket
+import time
+import re
+
+NGROK = "0.tcp.ngrok.io"
+NGROK_PORT = 13396
 
 
 class LaunchRequestHandler(AbstractRequestHandler):
@@ -29,7 +34,7 @@ class LaunchRequestHandler(AbstractRequestHandler):
 
     def handle(self, handler_input):
         # type: (HandlerInput) -> Response
-        speak_output = "This is an echo skill. You can say \"Tell blank\" and I will say blank."
+        speak_output = "Welcome to the worst chatbot ever. Start your phrases with \"tell\" and I will try to respond."
 
         return (
             handler_input.response_builder
@@ -38,6 +43,22 @@ class LaunchRequestHandler(AbstractRequestHandler):
                 .response
         )
 
+def netcat(hostname, port, content):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((hostname, port))
+    s.settimeout(0.5)
+    s.sendall(content.encode("utf-8"))
+    out = ""
+    while 1:
+        try:
+            data = s.recv(1024)
+        except socket.timeout:
+            break
+        else:
+            out += data.decode('utf-8')
+    s.shutdown(socket.SHUT_WR)
+    s.close()
+    return out
 
 class HelloWorldIntentHandler(AbstractRequestHandler):
     """Handler for Hello World Intent."""
@@ -49,11 +70,12 @@ class HelloWorldIntentHandler(AbstractRequestHandler):
         # type: (HandlerInput) -> Response
         speak_output = handler_input.request_envelope.request.intent.slots['raw_text'].value
 
-        # TODO: make an http call to NGROK, send value, receive value, filter for [text_0]
+        resp = netcat(NGROK, NGROK_PORT, speak_output+"\n")
+        resp = re.findall(r'\[text_1\]: (.*)', resp)[-1]
 
         return (
             handler_input.response_builder
-                .speak(speak_output)
+                .speak(resp)
                 # .ask("add a reprompt if you want to keep the session open for the user to respond")
                 .response
         )
