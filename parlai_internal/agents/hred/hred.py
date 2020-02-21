@@ -601,7 +601,6 @@ class HredAgent(TorchGeneratorAgent):
             observation.force_set("text_0", self.history.history_strings[-1])
         else:
             observation.force_set("text_0", "__SILENCE__") 
-        print(f"observing {observation}") 
         observation['labels'] = observation.get('labels_1')
         observation['eval_labels'] = observation.get('eval_labels_1')
         if "text_1" in observation:
@@ -768,6 +767,7 @@ class HredAgent(TorchGeneratorAgent):
                                 )
 
         self.record_local_metric('loss_2', AverageMetric.many(loss_2, target_tokens_2))
+        self.record_local_metric('loss', AverageMetric.many(loss_2, target_tokens_2))
         self.record_local_metric('ppl_2', PPLMetric.many(loss_2, target_tokens_2))
         self.record_local_metric(
                     'token_acc_2', AverageMetric.many(correct_2, target_tokens_2)
@@ -784,7 +784,6 @@ class HredAgent(TorchGeneratorAgent):
         """
         Evaluate a single batch of examples.
         """
-        print(f"batch for eval step {batch}") 
         if batch.text_0_vec is None and batch.image is None:
             return
         if batch.text_0_vec is not None:
@@ -815,7 +814,7 @@ class HredAgent(TorchGeneratorAgent):
             #beam_preds_scores_0, _ = self._generate(batch, self.beam_size, maxlen, index=0)
             #preds_0, scores_0 = zip(*beam_preds_scores_0)
 
-            beam_preds_scores_1, _ = self._generate(batch, self.beam_size, maxlen, index=1)
+            beam_preds_scores_1, _ = self._generate(batch, self.beam_size, maxlen)
             preds_1, scores_1 = zip(*beam_preds_scores_1)
 
         #cand_choices_0 = None
@@ -859,7 +858,7 @@ class HredAgent(TorchGeneratorAgent):
         #    self._compute_nltk_bleu(batch, text)
         return HREDOutput(text_0 = text_0, text_1 = text_1, text_0_candidates = None , text_1_candidates = cand_choices_1, token_losses=token_losses)
 
-    def _generate(self, batch, beam_size, max_ts, index = 0, context_vector=None):
+    def _generate(self, batch, beam_size, max_ts, context_vector=None):
         """
         Generate an output with beam search.
 
@@ -885,46 +884,40 @@ class HredAgent(TorchGeneratorAgent):
         model = self.model
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
             model = self.model.module
-        encoder_states = model.encoder(*self._encoder_input(batch, index))
-        if index == 0:
-            if batch.text_0_vec is not None:
-                dev = batch.text_0_vec.device
+       
+        # encode twice, decode once  
+        encoder_0_input = self._encoder_input(batch, 0) 
+        bsz = encoder_0_input[0].size(0)
+        encoder_output_0, encoder_state_0, encoder_attn_0 = model.encoder(*encoder_0_input)
+        combined_state = encoder_state_0[0][:,0,:]
+        if context_vector is None:
+            context_vector = torch.zeros((bsz, model.csz))
+        context_vector = model.context_update_gru_cell(combined_state, context_vector)
+        
+        encoder_1_input = self._encoder_input(batch, 1)
+        encoder_output_1, encoder_state_1, encoder_attn_1 = model.encoder(*encoder_1_input)
+        encoder_states = (encoder_output_1, encoder_state_1, encoder_attn_1)
+        combined_state = encoder_state_1[0][:,0,:]
+        context_vector = model.context_update_gru_cell(combined_state, context_vector)
+        
+        if batch.text_1_vec is not None:
+            dev = batch.text_1_vec.device
 
-            bsz = (
-                len(batch.text_0_lengths)
-                if batch.text_0_lengths is not None
-                else len(batch.image)
-            )
-            if batch.text_0_vec is not None:
-                batchsize = batch.text_0_vec.size(0)
-                beams = [
-                    self._treesearch_factory(dev).set_context(
-                        self._get_context(batch, batch_idx, index)
-                    )
-                    for batch_idx in range(batchsize)
-                ]
-            else:
-                beams = [self._treesearch_factory(dev) for _ in range(bsz)]
-
-        if index == 1:
-            if batch.text_1_vec is not None:
-                dev = batch.text_1_vec.device
-
-            bsz = (
-                len(batch.text_1_lengths)
-                if batch.text_1_lengths is not None
-                else len(batch.image)
-            )
-            if batch.text_1_vec is not None:
-                batchsize = batch.text_1_vec.size(0)
-                beams = [
-                    self._treesearch_factory(dev).set_context(
-                        self._get_context(batch, batch_idx, index)
-                    )
-                    for batch_idx in range(batchsize)
-                ]
-            else:
-                beams = [self._treesearch_factory(dev) for _ in range(bsz)]
+        bsz = (
+            len(batch.text_1_lengths)
+            if batch.text_1_lengths is not None
+            else len(batch.image)
+        )
+        if batch.text_1_vec is not None:
+            batchsize = batch.text_1_vec.size(0)
+            beams = [
+                self._treesearch_factory(dev).set_context(
+                    self._get_context(batch, batch_idx, 1)
+                )
+                for batch_idx in range(batchsize)
+            ]
+        else:
+            beams = [self._treesearch_factory(dev) for _ in range(bsz)]
 
         # repeat encoder outputs and decoder inputs
         decoder_input = (
@@ -935,14 +928,10 @@ class HredAgent(TorchGeneratorAgent):
         encoder_states = model.reorder_encoder_states(encoder_states, inds)
         incr_state = None
 
-        if context_vector is None:
-            context_vector = torch.zeros((bsz, model.csz))
-
         for _ts in range(max_ts):
             if all((b.is_done() for b in beams)):
                 # exit early if possible
                 break
-
             score, incr_state = model.decoder(decoder_input, encoder_states, context_vector)
             # only need the final hidden state to make the word prediction
             score = score[:, -1:, :]

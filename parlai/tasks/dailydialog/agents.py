@@ -66,24 +66,14 @@ class Convai2Teacher(FixedDialogTeacher):
         entries = [START_ENTRY] + full_eps['dialogue']
         their_turn = entries[speaker_id + 2 * entry_idx]
         my_turn = entries[1 + speaker_id + 2 * entry_idx]
-        try:
-            their_turn_2 = entries[2 + speaker_id + 2 * entry_idx]
-        except IndexError:
-            # skip this example 
-            return None
-        # TODO HRED: here is where we pass an extra label!! 
 
-        episode_done = 2 * entry_idx + speaker_id + 2 >= len(full_eps['dialogue']) - 1
-        print(f"EPISODE DONE {episode_done}") 
+        episode_done = 2 * entry_idx + speaker_id + 1 >= len(full_eps['dialogue']) - 1
         action = {
             'topic': full_eps['topic'],
-            'text_0': their_turn['text'],
-            'text_1': my_turn['text'],
-            'text_2': their_turn_2['text'],
+            'text': their_turn['text'],
             'emotion': their_turn['emotion'],
             'act_type': their_turn['act'],
-            'labels_1': [my_turn['text']],
-            'labels_2': [their_turn_2['text']],
+            'label': [my_turn['text']],
             'episode_done': episode_done,
         }
         return action

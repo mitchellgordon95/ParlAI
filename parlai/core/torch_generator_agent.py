@@ -592,7 +592,10 @@ class TorchGeneratorAgent(TorchAgent, ABC):
 
         try:
             loss= self.compute_loss(batch)
-            self.metrics['loss'] += loss.item()
+            try:
+                self.metrics['loss'] += loss.item()
+            except KeyError:
+                self.metrics['loss'] = loss.item()
             self.backward(loss)
             self.update_params()
         except RuntimeError as e:

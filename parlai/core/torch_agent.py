@@ -253,9 +253,8 @@ class History(object):
         """
         Update the history with the given observation.
         """
-        for i in range(3):  
+        for i in range(2):  
             field = f"{self.field}_{i}"
-            print(f"field is {field}") 
             if field in obs and obs[field] is not None:
                 if self.split_on_newln:
                     next_texts = obs[field].split('\n')
@@ -1550,7 +1549,6 @@ class TorchAgent(ABC, Agent):
 
         self.observation = observation
         # update the history using the observation
-        print(f"updating history with {observation}") 
         self.history.update_history(observation)
         return self.vectorize(
             observation,
