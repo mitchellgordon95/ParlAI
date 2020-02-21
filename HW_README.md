@@ -1,13 +1,14 @@
 # Setup 
-
+```
 conda env create --name parlai
 conda activate parlai
 pip install torch
 pip install -r requirements.txt
 python setup.py develop
+```
 
 # Dataset 
-We used the (DailyDialogue dataset)[https://www.aclweb.org/anthology/I17-1099/] because it is multi-turn, lending itself nicely to the HRED setup. The dataset has 13,118 dialogues with an average of 7.9 turns per speaker per dialogue. 
+We used the [DailyDialogue dataset](https://www.aclweb.org/anthology/I17-1099/) because it is multi-turn, lending itself nicely to the HRED setup. The dataset has 13,118 dialogues with an average of 7.9 turns per speaker per dialogue. 
 The modified dataloader for this is in `parlai_internal/tasks/dailydialog/`. The dataloader returns triples of  utterances (where possible) instead of pairs.
 
 # Model 
@@ -42,6 +43,9 @@ Enter Your Message: thanks for the info
 
 # Train/valid loss graphs
 Train/valid loss graphs are in `parlai_internal/zoo/dailydialog/*.png`
+
+# Analysis
+A common thread is that many of the responses seem to start with "I'll". This might be a result of the training data. Overall, it seems that DailyDialogue is perhaps not the most ideal dataset to use for the task, and is perhaps not large enough. The train and valid loss graphs for all the models seem fairly reasonable. Interestingly, adding pre-trained GlOVE embeddings completely messed up the model, which became totally degenerate. This is also reflected in the high level of noise of the train/valid loss graph. 
 
 # Alexa integration 
 Copy the models: current models are stored on the COE grid: 
