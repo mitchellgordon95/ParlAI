@@ -52,6 +52,13 @@ Train/valid loss graphs are in `parlai_internal/zoo/dailydialog/*.png`
 # Analysis
 A common thread is that many of the responses seem to start with "I'll". This might be a result of the training data. Overall, it seems that DailyDialogue is perhaps not the most ideal dataset to use for the task, and is perhaps not large enough. The train and valid loss graphs for all the models seem fairly reasonable. Interestingly, adding pre-trained GlOVE embeddings did not improve the model; when a very low learn rate (0.001) was used, the model became totally degenerate. This is also reflected in the high level of noise of the train/valid loss graph, and might have to do with underfitting. 
 
+The main issue with the model is the fact that under all of the current training regimes, the model defaults to outputting a very small number (1-3) of utterances. We think that this could be due to a number of factors including: 
+- underfitting
+- poor hyperparameter choice
+- lack of training data 
+
+These could be addressed by training for longer with a larger range of hyperparameters, and using a different/augmented dataset. 
+
 # Alexa integration 
 Copy the models: current models are stored on the COE grid: 
 
