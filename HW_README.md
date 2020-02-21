@@ -20,13 +20,16 @@ We tried training a number of models under various settings in an attempt to get
 # Results 
 For all of our models, the training regime has led to slightly different local optima which the model is unable to get out of. These results are reported here:
 
-- big_model.ckpt: "I ' ll be a lot of ."
-- low_lr.ckpt: "I ' m a so ." 
-- model2.ckpt: "I ' ll be a good idea ." 
-- glove.ckpt: "' ' ' . . . . . . . . . ." 
+| model | output | validation ppl |
+| ----- | ------ | -------------- |
+| big_model.ckpt | "I ' ll be a lot of ." | 225.4 |
+| low_lr.ckpt | "I ' m a so ."  | 403.5 |
+| model2.ckpt | "I ' ll be a good idea ."  | 92.45 |
+| glove.ckpt | "' ' ' . . . . . . . . . ." | 4981.0 | 
+| highlr_glove.ckpt | "I ." | 1210.0 | 
 
 The only model that varies its responses is the longer training time setting: 
-- long_train.ckpt: 
+long_train.ckpt (ppl = 122.7) 
 
 ```
 Enter Your Message: hello my name is elias
@@ -41,11 +44,13 @@ Enter Your Message: thanks for the info
 [text_1]: That ' s right .
 ```
 
+Because of the very repetitive quality of the output, we think that futher quantitative evaluation (e.g. BLEU) would not be very informative. A very baseline quantitative analysis for these models would be a measure of output diversity which rewards having a diverse output. [Hu et al. (2019)](https://www.aaai.org/ojs/index.php/AAAI/article/view/4618) used inverse BLEU to this end for paraphrastic rewriting.  
+
 # Train/valid loss graphs
 Train/valid loss graphs are in `parlai_internal/zoo/dailydialog/*.png`
 
 # Analysis
-A common thread is that many of the responses seem to start with "I'll". This might be a result of the training data. Overall, it seems that DailyDialogue is perhaps not the most ideal dataset to use for the task, and is perhaps not large enough. The train and valid loss graphs for all the models seem fairly reasonable. Interestingly, adding pre-trained GlOVE embeddings completely messed up the model, which became totally degenerate. This is also reflected in the high level of noise of the train/valid loss graph. 
+A common thread is that many of the responses seem to start with "I'll". This might be a result of the training data. Overall, it seems that DailyDialogue is perhaps not the most ideal dataset to use for the task, and is perhaps not large enough. The train and valid loss graphs for all the models seem fairly reasonable. Interestingly, adding pre-trained GlOVE embeddings did not improve the model; when a very low learn rate (0.001) was used, the model became totally degenerate. This is also reflected in the high level of noise of the train/valid loss graph, and might have to do with underfitting. 
 
 # Alexa integration 
 Copy the models: current models are stored on the COE grid: 
