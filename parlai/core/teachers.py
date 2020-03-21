@@ -40,7 +40,6 @@ from parlai.core.opt import Opt
 from parlai.utils.misc import AttrDict, no_lock, str_to_msg, warn_once
 from parlai.utils.distributed import get_rank, num_workers, is_distributed
 
-from functools import lru_cache
 from abc import ABC, abstractmethod
 
 import concurrent.futures
@@ -766,14 +765,16 @@ class DialogData(object):
         """
         return len(self.data)
 
-    @lru_cache(maxsize=1)
     def num_examples(self):
         """
         Return total number of entries available.
 
         Each episode has at least one entry, but might have many more.
         """
-        return sum(len(episode) for episode in self.data)
+        if hasattr(self, '_num_examples_cache'):
+            return self._num_examples_cache
+        self._num_examples_cache = sum(len(episode) for episode in self.data)
+        return self._num_examples_cache
 
     def get(self, episode_idx, entry_idx=0):
         """
@@ -1388,8 +1389,15 @@ class ParlAIDialogTeacher(FixedDialogTeacher):
         self.num_exs = 0
         eps = []
         with open(path, newline='\n') as read:
-            for line in read:
+            for line_no, line in enumerate(read, 1):
                 msg = str_to_msg(line.rstrip('\n'))
+                if msg and 'eval_labels' in msg:
+                    raise ValueError(
+                        f"It looks like you've written eval_labels as a key in your "
+                        f"data file. This is not appropriate; labels will be converted "
+                        f"for you automatically. This is happening on Line {line_no} "
+                        f"in {path}. The line is:\n\t{line}"
+                    )
                 if msg:
                     self.num_exs += 1
                     eps.append(msg)
@@ -1902,7 +1910,10 @@ class MultiTaskTeacher(Teacher):
         """
         Report aggregated metrics across all subtasks.
         """
-        return aggregate_named_reports({t.getID(): t.report() for t in self.tasks})
+        return aggregate_named_reports(
+            {t.getID(): t.report() for t in self.tasks},
+            micro_average=self.opt.get('aggregate_micro', False),
+        )
 
     def reset(self):
         """
