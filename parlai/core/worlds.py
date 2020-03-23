@@ -415,6 +415,8 @@ class DialogPartnerWorld(World):
                 a.global_metrics.sync()
 
 
+
+
 class MultiAgentDialogWorld(World):
     """
     Basic world where each agent gets a turn in a round-robin fashion.
@@ -867,6 +869,7 @@ class BatchWorld(World):
         # Call update on agent
         a = self.world.get_agents()[agent_idx]
         if hasattr(a, 'batch_act'):
+
             batch_actions = a.batch_act(batch_observation)
             # Store the actions locally in each world.
             for i, w in enumerate(self.worlds):

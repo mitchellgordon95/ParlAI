@@ -559,7 +559,6 @@ class HREDRNNDecoder(nn.Module):
 
         # sequence indices => sequence embeddings
         seqlen = xs.size(1)
-        print(f"inside decode xs are {xs.shape}") 
         xes = self.dropout(self.lt(xs))
 
         if self.attn_time == 'pre':
