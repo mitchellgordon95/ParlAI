@@ -263,23 +263,21 @@ class History(object):
         """
         Update the history with the given observation.
         """
-        for i in range(2):  
-            field = f"{self.field}_{i}"
-            if field in obs and obs[field] is not None:
-                if self.split_on_newln:
-                    next_texts = obs[field].split('\n')
-                else:
-                    next_texts = [obs[field]]
-                for text in next_texts:
-                    self._update_raw_strings(text)
-                    if self.add_person_tokens:
-                        text = self._add_person_tokens(
-                            obs[self.field], self.p1_token, self.add_p1_after_newln
-                        )
-                    # update history string
-                    self._update_strings(text)
-                    # update history vecs
-                    self._update_vecs(text)
+        if self.field in obs and obs[self.field] is not None:
+            if self.split_on_newln:
+                next_texts = obs[self.field].split('\n')
+            else:
+                next_texts = [obs[self.field]]
+            for text in next_texts:
+                self._update_raw_strings(text)
+                if self.add_person_tokens:
+                    text = self._add_person_tokens(
+                        obs[self.field], self.p1_token, self.add_p1_after_newln
+                    )
+                # update history string
+                self._update_strings(text)
+                # update history vecs
+                self._update_vecs(text)
 
     def get_history_str(self):
         """
@@ -1171,6 +1169,7 @@ class TorchAgent(ABC, Agent):
         Subclasses will likely want to share their model as well.
         """
         shared = super().share()
+
         if self.opt.get('numthreads', 1) > 1 and isinstance(self.metrics, dict):
             # move metrics and model to shared memory
             self.metrics = SharedTable(self.metrics)
@@ -1566,13 +1565,9 @@ class TorchAgent(ABC, Agent):
         observation = Message(observation)
 
         # Sanity check everything is in order
-        #print(f"observation coming into observe is {observation}") 
-        #self._validate_observe_invariants()
-        #print(f"\t----validated") 
+        self._validate_observe_invariants()
 
         if observation.get('episode_done'):
-
-            #print(f"episode_done is True") 
             self.__expecting_clear_history = True
         elif 'labels' in observation or 'eval_labels' in observation:
             # make sure we note that we're expecting a reply in the future
@@ -1599,11 +1594,10 @@ class TorchAgent(ABC, Agent):
         :param self_message:
             The message corresponding to the output from batch_act.
         """
-        #print(f"self observe {self_message}") 
         use_reply = self.opt.get('use_reply', 'label')
 
         # quick check everything is in order
-        #self._validate_self_observe_invariants()
+        self._validate_self_observe_invariants()
 
         assert self.observation is not None
         if self.observation['episode_done']:
@@ -1635,7 +1629,6 @@ class TorchAgent(ABC, Agent):
                 lbls = self.observation[label_key]
                 last_reply = lbls[0] if len(lbls) == 1 else self.random.choice(lbls)
                 self.history.add_reply(last_reply)
-
                 return
             # you might expect a hard failure here, but in interactive mode we'll
             # never get a label
@@ -1858,9 +1851,7 @@ class TorchAgent(ABC, Agent):
         ]
 
         # check if there are any labels available, if so we will train on them
-        print([obs for obs in observations])
-        # TODO HRED: change here to any labels_index
-        self.is_training = any('labels' in obs or "labels_1" in obs for obs in observations)
+        self.is_training = any('labels' in obs for obs in observations)
 
         # create a batch from the vectors
         batch = self.batchify(observations)
@@ -1882,7 +1873,6 @@ class TorchAgent(ABC, Agent):
 
         if self.is_training:
             output = self.train_step(batch)
-            print(f"took train step and got {output}") 
         else:
             with torch.no_grad():
                 # save memory and compute by disabling autograd.
@@ -1907,6 +1897,7 @@ class TorchAgent(ABC, Agent):
 
         # Make sure we push all the metrics to main thread in hogwild/workers
         self.global_metrics.flush()
+
         return batch_reply
 
     @abstractmethod
