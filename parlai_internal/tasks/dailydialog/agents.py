@@ -22,6 +22,7 @@ once acting as Speaker 2.
 import os
 import json
 from parlai.core.teachers import FixedDialogTeacher
+from parlai.core.message import Message
 from .build import build
 
 
@@ -66,14 +67,20 @@ class Convai2Teacher(FixedDialogTeacher):
         entries = [START_ENTRY] + full_eps['dialogue']
         their_turn = entries[speaker_id + 2 * entry_idx]
         my_turn = entries[1 + speaker_id + 2 * entry_idx]
+        try:
+            their_turn_2 = entries[2 + speaker_id + 2 * entry_idx]
+        except IndexError:
+            their_turn_2 = {'emotion': 'no_emotion', 'act': 'directive', 'text': "__SILENCE__"}
+        episode_done = 2 * entry_idx + speaker_id + 2 >= len(full_eps['dialogue']) - 1
 
-        episode_done = 2 * entry_idx + speaker_id + 1 >= len(full_eps['dialogue']) - 1
         action = {
             'topic': full_eps['topic'],
-            'text': their_turn['text'],
+            'text_0': their_turn['text'],
+            'text_1': my_turn['text'],
             'emotion': their_turn['emotion'],
             'act_type': their_turn['act'],
-            'label': [my_turn['text']],
+            'labels_1': [my_turn['text']],
+            'labels_2': [their_turn_2['text']],
             'episode_done': episode_done,
         }
         return action
@@ -82,6 +89,35 @@ class Convai2Teacher(FixedDialogTeacher):
         shared = super().share()
         shared['data'] = self.data
         return shared
+
+    def act(self):
+        """
+        Send new dialog message.
+        """
+        if not hasattr(self, 'epochDone'):
+            # reset if haven't yet
+            self.reset()
+
+        # get next example, action is episode_done dict if already out of exs
+        action, self.epochDone = self.next_example()
+        # TODO: all teachers should eventually create messages
+        # while setting up the data, so this won't be necessary
+        action = Message(action)
+        action.force_set('id', self.getID())
+
+        # remember correct answer if available
+        self.lastY = action.get('labels_1', action.get('eval_labels_1', None))
+        if (
+            not self.datatype.startswith('train') or 'evalmode' in self.datatype
+        ) and 'labels' in action:
+            # move labels to eval field so not used for training
+            # but this way the model can use the labels for perplexity or loss
+            action = action.copy()
+            labels = action.pop('labels')
+            if not self.opt.get('hide_labels', False):
+                action['eval_labels'] = labels
+
+        return action
 
 
 class NoStartTeacher(Convai2Teacher):

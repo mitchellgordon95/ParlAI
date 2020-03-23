@@ -33,6 +33,7 @@ from parlai.utils.misc import warn_once
 from parlai.core.metrics import SumMetric, AverageMetric, BleuMetric, FairseqBleuMetric
 from parlai.utils.fp16 import FP16SafeCrossEntropy
 from parlai.utils.torch import neginf
+import parlai.utils.pickle
 
 
 try:
@@ -324,8 +325,8 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         )
         agent.add_argument(
             '--inference',
-            choices={'beam', 'greedy', 'topk', 'nucleus', 'delayedbeam'},
-            default='greedy',
+            choices={'mmi-bidi', 'beam', 'greedy', 'topk', 'nucleus'},
+            default='mmi-bidi',
             help='Generation algorithm',
         )
         agent.add_argument(
@@ -335,13 +336,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             '--topp', type=float, default=0.9, help='p used in nucleus sampling'
         )
         agent.add_argument(
-            '--beam-delay', type=int, default=30, help='used in delayedbeam search'
-        )
-        agent.add_argument(
-            '--temperature',
-            type=float,
-            default=1.0,
-            help='temperature to add during decoding',
+            '--reverse_model', type=str, default=None, help='path to reverse model'
         )
         agent.add_argument(
             '--compute-tokenized-bleu',
@@ -361,8 +356,6 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         self.beam_min_length = opt.get('beam_min_length', 1)
         self.beam_block_ngram = opt.get('beam_block_ngram', -1)
         self.beam_context_block_ngram = opt.get('beam_context_block_ngram', -1)
-        self.temperature = opt.get('temperature', 1.0)
-        assert self.temperature > 0, '--temperature must be greater than 0'
         self.output_token_losses = opt.get('verbose', False)
         self.compute_tokenized_bleu = opt.get('compute_tokenized_bleu', False)
 
@@ -612,7 +605,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
                     'if this happens frequently, decrease batchsize or '
                     'truncate the inputs to the model.'
                 )
-                self.global_metrics.add('skipped_batches', SumMetric(1))
+                self.global_metrics.update('skipped_batches', SumMetric(1))
                 # gradients are synced on backward, now this model is going to be
                 # out of sync! catch up with the other workers
                 self._init_cuda_buffer(8, 8, True)
@@ -764,8 +757,9 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         return Output(text, cand_choices, token_losses=token_losses)
 
     def _treesearch_factory(self, device):
-        method = self.opt.get('inference', 'greedy')
+        method = self.opt.get('inference', 'mmi-bidi')
         beam_size = self.opt.get('beam_size', 1)
+        method = "mmi-bidi"
         if method == 'greedy':
             return GreedySearch(
                 beam_size,
@@ -780,20 +774,6 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             )
         elif method == 'beam':
             return BeamSearch(
-                beam_size,
-                min_length=self.beam_min_length,
-                block_ngram=self.beam_block_ngram,
-                context_block_ngram=self.beam_context_block_ngram,
-                length_penalty=self.opt.get('beam_length_penalty', 0.65),
-                padding_token=self.NULL_IDX,
-                bos_token=self.START_IDX,
-                eos_token=self.END_IDX,
-                device=device,
-            )
-        elif method == 'delayedbeam':
-            return DelayedBeamSearch(
-                self.opt['topk'],
-                self.opt['beam_delay'],
                 beam_size,
                 min_length=self.beam_min_length,
                 block_ngram=self.beam_block_ngram,
@@ -830,6 +810,19 @@ class TorchGeneratorAgent(TorchAgent, ABC):
                 eos_token=self.END_IDX,
                 device=device,
             )
+        elif method == "mmi-bidi":
+            return MMIDecoding(
+                self.opt['reverse_model'],
+                self.opt['topp'],
+                beam_size,
+                min_length=self.beam_min_length,
+                block_ngram=self.beam_block_ngram,
+                context_block_ngram=self.beam_context_block_ngram,
+                length_penalty=self.opt.get('beam_length_penalty', 0.65),
+                padding_token=self.NULL_IDX,
+                bos_token=self.START_IDX,
+                eos_token=self.END_IDX,
+                device=device,)
         else:
             raise ValueError(f"Can't use inference method {method}")
 
@@ -909,10 +902,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             score = model.output(score)
             # score contains softmax scores for bsz * beam_size samples
             score = score.view(bsz, beam_size, -1)
-            if self.temperature != 1.0:
-                score.div_(self.temperature)
-            # force to fp32 to avoid overflow issues during search calculations
-            score = F.log_softmax(score, dim=-1, dtype=torch.float32)
+            score = F.log_softmax(score, dim=-1)
             for i, b in enumerate(beams):
                 if not b.is_done():
                     b.advance(score[i])
@@ -931,13 +921,9 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             ).unsqueeze(-1)
             decoder_input = torch.cat([decoder_input, selection], dim=-1)
 
-        # get all finalized candidates for each sample (and validate them)
-        n_best_beam_preds_scores = [b.get_rescored_finished() for b in beams]
-
-        if hasattr(self, '_rerank_beams'):
-            n_best_beam_preds_scores = self._rerank_beams(
-                batch, n_best_beam_preds_scores
-            )
+        # get all finilized candidates for each sample (and validate them)
+        n_best_beam_preds_scores = [b.get_rescored_finished(input_tokens = self._encoder_input(batch)) for b in beams]
+        #n_best_beam_preds_scores = [b.get_rescored_finished() for b in beams]
 
         # get the top prediction for each beam (i.e. minibatch sample)
         beam_preds_scores = [n_best_list[0] for n_best_list in n_best_beam_preds_scores]
@@ -959,6 +945,17 @@ class _HypothesisTail(object):
         self.score = score
         self.tokenid = tokenid
 
+class _MMIHypothesisTail(object):
+    """
+    Hold some bookkeeping about a hypothesis.
+    """
+
+    # use slots because we don't want dynamic attributes here
+    __slots__ = ['timestep', 'hypid', 'score', 'reverse_score', 'tokenid']
+
+    def __init__(self, reverse_score, *args):
+        super().__init__(*args)
+        self.reverse_score = reverse_score 
 
 TSType = TypeVar('TSType', bound='TreeSearch')
 
@@ -1055,7 +1052,7 @@ class TreeSearch(object):
         return self.bookkeep[-1]
 
     @abstractmethod
-    def select_paths(self, logprobs, prior_scores, current_length):
+    def select_paths(self, logprobs, prior_scores):
         """
         Select the next vocabulary item in these beams.
 
@@ -1065,8 +1062,7 @@ class TreeSearch(object):
         :param prior_scores:
             a (beamsize) tensor of weights with the cumulative running
             log-probability of each beam. If the first turn, it will be a (1) tensor.
-        :param current_length:
-            the current length in tokens
+
         :return:
             a (hypothesis_ids, token_id, scores) tuple, where:
 
@@ -1137,9 +1133,7 @@ class TreeSearch(object):
                 self.context_block_ngram, logprobs, self.context
             )
 
-        hyp_ids, tok_ids, self.scores = self.select_paths(
-            logprobs, self.scores, current_length
-        )
+        hyp_ids, tok_ids, self.scores = self.select_paths(logprobs, self.scores)
         # use clone() here to ensure that self.all_scores will not be changed
         # later due to any penalties to self.scores
         self.all_scores.append(self.scores.clone())
@@ -1154,7 +1148,7 @@ class TreeSearch(object):
         #  check new hypos for eos label, if we have some, add to finished
         for hypid in range(self.beam_size):
             if self.outputs[-1][hypid] == self.eos:
-                if self.scores[hypid] <= neginf(self.scores.dtype):
+                if self.scores[hypid] == neginf(self.scores.dtype):
                     continue
                 #  this is finished hypo, adding to finished
                 eostail = _HypothesisTail(
@@ -1296,7 +1290,7 @@ class GreedySearch(TreeSearch):
         if self.beam_size != 1:
             raise ValueError('Greedy search can only be run with beam size 1.')
 
-    def select_paths(self, logprobs, prior_scores, current_length):
+    def select_paths(self, logprobs, prior_scores):
         tok_scores, tok_ids = logprobs.max(1)
         best_scores = tok_scores + prior_scores
         hyp_ids = torch.arange(logprobs.size(0)).to(logprobs.device)
@@ -1308,7 +1302,7 @@ class BeamSearch(TreeSearch):
     Beam search.
     """
 
-    def select_paths(self, logprobs, prior_scores, current_length):
+    def select_paths(self, logprobs, prior_scores):
         """
         Select the next vocabulary item in these beams.
         """
@@ -1330,31 +1324,6 @@ class BeamSearch(TreeSearch):
         return (hyp_ids, tok_ids, best_scores)
 
 
-class DelayedBeamSearch(TreeSearch):
-    """
-    DelayedBeam: Top-K sampling followed by beam search (Massarelli et al., 2019).
-
-    Samples from a truncated distribution where only the most probable K words
-    are considered at each time for the first N tokens, then switches to beam
-    after N steps.
-
-    See https://arxiv.org/abs/1911.03587 for details.
-    """
-
-    def __init__(self, k, delay, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.k = k
-        self.delay = delay
-
-    def select_paths(self, logprobs, prior_scores, current_length):
-        if current_length < self.delay:
-            return TopKSampling.select_paths(
-                self, logprobs, prior_scores, current_length
-            )
-        else:
-            return BeamSearch.select_paths(self, logprobs, prior_scores, current_length)
-
-
 class TopKSampling(TreeSearch):
     """
     Top-K sampling (Fan et al., 2018).
@@ -1371,7 +1340,7 @@ class TopKSampling(TreeSearch):
         super().__init__(*args, **kwargs)
         self.k = k
 
-    def select_paths(self, logprobs, prior_scores, current_length):
+    def select_paths(self, logprobs, prior_scores):
         values, indices = logprobs.topk(self.k, dim=-1)
         probs = torch.softmax(values, dim=-1)
         choices = torch.multinomial(probs, 1)[:, 0]
@@ -1398,7 +1367,7 @@ class NucleusSampling(TreeSearch):
         super().__init__(*args, **kwargs)
         self.p = p
 
-    def select_paths(self, logprobs, prior_scores, current_length):
+    def select_paths(self, logprobs, prior_scores):
         # Unlike the other treesearch methods, we have to switch to linspace
         # for the probabilities in order to compute the CDF.
         probs = torch.softmax(logprobs, dim=-1)
@@ -1416,3 +1385,150 @@ class NucleusSampling(TreeSearch):
         scores = sprobs[hyp_ids, choices].log()
         best_scores = prior_scores.expand_as(scores) + scores
         return (hyp_ids, tok_ids, best_scores)
+
+
+class MMIDecoding(NucleusSampling):
+    """
+    """
+
+    def __init__(self, model, p, *args, **kwargs):
+        super().__init__(p, *args, **kwargs)
+        self.reverse_model = self.load_model(model)
+
+    def get_opt_dict(self, path): 
+        from parlai.core.dict import DictionaryAgent
+        from parlai.core.params import ParlaiParser
+        import json
+        import argparse
+        opt_path, dict_path = path + ".opt", path + ".dict"
+
+        parser = ParlaiParser(False, True)
+        #parser = argparse.ArgumentParser() 
+        with open(opt_path) as f1:
+            m_opt_dict = json.load(f1)
+        parse_string = []
+        parse_string.append("--model-file")
+        parse_string.append(m_opt_dict['model_file'])
+        #parse_string.append("--embedding-size")
+        #parse_string.append(str(m_opt_dict['embedding_size']))
+
+        
+        #for k, v in m_opt_dict.items():
+        #    if type(v) == list:
+        #        continue
+        #    if v is None:
+        #        continue
+        #    parse_string.append("--" + str(k).replace("_","-"))
+        #    parse_string.append(str(v))
+        m_opt = m_opt_dict
+
+        #m_opt['model_file'] = m_opt['reverse_model']
+        #m_opt['reverse_model'] = None
+        m_opt['dictionary_file'] = dict_path
+        m_opt["embedding_size"] = m_opt_dict['embedding_size']
+
+        m_dict = DictionaryAgent(m_opt)
+        if m_opt.get('person_tokens'):
+            m_dict[self.P1_TOKEN] = 999_999_999
+            m_dict[self.P2_TOKEN] = 999_999_998
+
+        with open(m_opt['dictionary_file']) as f1:
+            for line in f1:
+                line = line.strip().split("\t")
+                k, v = str(line[0]), int(line[1]) 
+                m_dict[k] = v
+        return m_opt, m_dict
+
+    def load_model(self, path):
+        from parlai.agents.transformer.modules import TransformerGeneratorModel
+        states = torch.load(
+            path, map_location=lambda cpu, _: cpu, pickle_module=parlai.utils.pickle
+        )
+        ## what's the type of model put it here
+        m_opt, m_dict = self.get_opt_dict(path)
+        model = TransformerGeneratorModel(m_opt, m_dict)
+        model.load_state_dict(states['model'])
+        return model 
+
+    def get_reverse_score(self, input_tokens, output_tokens):
+        # model will take input and output tokens, return adjusted score
+        scores, preds, __ = self.reverse_model(output_tokens, ys = input_tokens) 
+        score = torch.sum(scores)/scores.size(1)
+        return score
+
+    # override sorting
+    def get_rescored_finished(self, input_tokens, n_best=None):
+        """
+        Return finished hypotheses according to adjusted scores.
+
+        Score adjustment is done according to the Google NMT paper, which
+        penalizes long utterances.
+
+        :param n_best:
+            number of finalized hypotheses to return
+
+        :return:
+            list of (tokens, score) pairs, in sorted order, where:
+              - tokens is a tensor of token ids
+              - score is the adjusted log probability of the entire utterance
+        """
+        # if we never actually finished, force one
+        if not self.finished:
+            self.outputs[-1][0] = self.eos
+            self.finished.append(
+                _HypothesisTail(
+                    timestep=len(self.outputs) - 1,
+                    hypid=0,
+                    score=self.all_scores[-1][0],
+                    tokenid=self.outputs[-1][0],
+                )
+            )
+
+        rescored_finished = []
+        for finished_item in self.finished:
+            current_length = finished_item.timestep + 1
+            # these weights are from Google NMT paper
+            length_penalty = math.pow((1 + current_length) / 6, self.length_penalty)
+            rescored_finished.append(
+                _HypothesisTail(
+                    timestep=finished_item.timestep,
+                    hypid=finished_item.hypid,
+                    score=finished_item.score / length_penalty,
+                    tokenid=finished_item.tokenid,
+                )
+            )
+
+        # Note: beam size is almost always pretty small, so sorting is cheap enough
+        # sort by reverse P(S|T) from model
+        for i, hyp in enumerate(rescored_finished):
+            # subtract the reverse score
+            tokens = torch.Tensor([h.tokenid for h in self._get_hyp_from_finished(hyp)]).unsqueeze(0).long()
+            input_tokens = input_tokens[0]
+            if len(input_tokens.shape) < 2:
+                input_tokens = input_tokens.unsqueeze(0)
+            score =  0.8 * hyp.score + 0.2 * self.get_reverse_score(input_tokens, tokens)
+            hyp.score = score
+            rescored_finished[i] = hyp
+
+        srted = sorted(rescored_finished, key=attrgetter('score'), reverse=True)
+
+        if n_best is not None:
+            srted = srted[:n_best]
+
+        n_best_list = [
+            (self._get_pretty_hypothesis(self._get_hyp_from_finished(hyp)), hyp.score)
+            for hyp in srted
+        ]
+
+        # check that there is at least one finished candidate
+        # and assert that each of them contains only one EOS
+        assert (
+            len(n_best_list) >= 1
+        ), f'MMIDecoding returned {len(n_best_list)} candidates, must be >= 1'
+        for (pred, score) in n_best_list:
+            assert (
+                pred == self.eos
+            ).sum() == 1, f'MMIDecoding returned a finalized hypo with multiple end tokens \
+            with score {score.item():.2f}'
+
+        return n_best_list
