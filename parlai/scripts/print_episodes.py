@@ -21,7 +21,6 @@ Examples
 from parlai.core.params import ParlaiParser
 from parlai.agents.repeat_label.repeat_label import RepeatLabelAgent
 from parlai.core.worlds import create_task
-from parlai.utils.strings import colorize
 
 import random
 import sys
@@ -79,6 +78,7 @@ def display_data(opt):
         else:
             assert len(text) == 1
             print(text[0])
+
 
         print(world.acts[0]['labels'][0])
 
