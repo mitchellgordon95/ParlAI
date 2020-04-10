@@ -90,6 +90,7 @@ def main():
     # )
 
     opt = argparser.parse_args()
+    opt['inference'] = 'poop'
 
     # add additional model args
     opt['override'] = {
@@ -99,6 +100,7 @@ def main():
     }
 
     bot = create_agent(opt)
+
     shared_bot_params = bot.share()
     print(
         '=== Actual bot opt === :\n {}'.format(
@@ -114,6 +116,7 @@ def main():
     if 'data_path' not in opt:
         opt['data_path'] = os.getcwd() + '/data/' + folder_name
     opt.update(task_config)
+    opt['inference'] = 'mmi-bidi'
 
     mturk_agent_ids = ['PERSON_1']
 
